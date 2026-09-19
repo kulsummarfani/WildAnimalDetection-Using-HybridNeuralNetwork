@@ -1,8 +1,3 @@
-
-
-
-
-import argparse
 import os
 import sys
 from pathlib import Path
@@ -10,10 +5,18 @@ from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
 
-import sys
-sys.path.insert(0, './yolov5')
+PROJECT_ROOT = Path(__file__).resolve().parent
+YOLO_ROOT = PROJECT_ROOT / 'yolov5'
+RUNTIME_DIR = PROJECT_ROOT / '.runtime'
+RUNTIME_DIR.mkdir(exist_ok=True)
+# Keep third-party caches/settings inside the project so this works on machines
+# where the user home directory is read-only (for example, sandboxes).
+os.environ.setdefault('YOLOV5_CONFIG_DIR', str(RUNTIME_DIR / 'ultralytics'))
+os.environ.setdefault('MPLCONFIGDIR', str(RUNTIME_DIR / 'matplotlib'))
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+sys.path.insert(0, str(YOLO_ROOT))
 
-ROOT = 'yolov5'
+ROOT = YOLO_ROOT
 
 from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams
@@ -22,14 +25,19 @@ from utils.general import (LOGGER, check_file, check_img_size, check_imshow, che
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 
+from alert import alert_configuration_error, send_sms_alert
+from classify import predict_species
+from gradcam import make_gradcam_overlay
+from threat import get_threat_tier, should_alert
+
 
 @torch.no_grad()
 
 
 def run(
-        weights='model/best.pt',  # model.pt path(s)
-        source='testImages/3.jpeg',  # file/dir/URL/glob, 0 for webcam
-        data='yolov5/data/coco128.yaml',  # dataset.yaml path
+        weights=PROJECT_ROOT / 'model/best.pt',  # model.pt path(s)
+        source=PROJECT_ROOT / 'testImages/3.jpeg',  # file/dir/URL/glob, 0 for webcam
+        data=YOLO_ROOT / 'data/coco128.yaml',  # dataset.yaml path
         imgsz=(196,196),  # inference size (height, width)
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
@@ -53,8 +61,12 @@ def run(
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
+        classify=True,  # identify each detected animal with the VGG-BiLSTM model
+        gradcam=True,  # save Grad-CAM evidence overlays for classified detections
+        send_alerts=False,  # send an SMS for the most confident species result
 ):
     detected_value = 0
+    alert_candidates = []
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
@@ -142,7 +154,28 @@ def run(
 
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
-                        label = ""#None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
+                        label = names[c] if hide_conf else f'{names[c]} {conf:.2f}'
+                        if classify:
+                            x1, y1, x2, y2 = [int(value) for value in xyxy]
+                            height, width = im0.shape[:2]
+                            x1, x2 = max(0, x1), min(width, x2)
+                            y1, y2 = max(0, y1), min(height, y2)
+                            crop = im0[y1:y2, x1:x2]
+                            if crop.size:
+                                try:
+                                    if gradcam:
+                                        overlay, species, species_conf = make_gradcam_overlay(crop)
+                                        gradcam_dir = PROJECT_ROOT / 'gradcam'
+                                        gradcam_dir.mkdir(exist_ok=True)
+                                        cv2.imwrite(str(gradcam_dir / f'{p.stem}_{seen}_{c}.jpg'), overlay)
+                                    else:
+                                        species, species_conf = predict_species(crop)
+                                    tier = get_threat_tier(species)
+                                    if should_alert(species, species_conf):
+                                        alert_candidates.append((species, species_conf, tier))
+                                    label = species if hide_conf else f'{species} ({tier}) {species_conf * 100:.1f}%'
+                                except (OSError, ValueError, RuntimeError) as exc:
+                                    LOGGER.warning(f'Species classification skipped: {exc}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
                         detected_value = 1
                     #if save_crop:
@@ -157,7 +190,7 @@ def run(
             # Save results (image with detections)
             if save_img:
                 if dataset.mode == 'image':
-                    cv2.imwrite("output.png", im0)
+                    cv2.imwrite(str(PROJECT_ROOT / "output.png"), im0)
                 else:  # 'video' or 'stream'
                     if vid_path[i] != save_path:  # new video
                         vid_path[i] = save_path
@@ -173,12 +206,34 @@ def run(
                         vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer[i].write(im0)
 
+        if send_alerts and alert_candidates:
+            species, confidence, _ = max(alert_candidates, key=lambda result: result[1])
+            send_sms_alert(species, confidence)
+
         return detected_value
 
 
-def main(image_path):
+def main(image_path=PROJECT_ROOT / 'testImages/9.jpeg', classify=True, gradcam=True, send_alerts=False):
+    """Run wildlife detection and return 1 when an animal is found, else 0."""
     check_requirements(exclude=('tensorboard', 'thop'))
-    return run(source = image_path)
-    
-print(main("testImages/9.jpeg"))
+    return run(source=image_path, classify=classify, gradcam=gradcam, send_alerts=send_alerts)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Detect wildlife in an image, video, folder, or camera stream.')
+    parser.add_argument('source', nargs='?', default=PROJECT_ROOT / 'testImages/9.jpeg',
+                        help='input image/video path, folder, URL, or camera index (default: testImages/9.jpeg)')
+    parser.add_argument('--no-classify', action='store_true', help='skip second-stage species classification')
+    parser.add_argument('--no-gradcam', action='store_true', help='skip Grad-CAM evidence-image generation')
+    parser.add_argument('--send-alerts', action='store_true', help='send a Fast2SMS alert (requires environment variables)')
+    parser.add_argument('--check-alert-config', action='store_true', help='verify .env SMS settings without sending a message')
+    args = parser.parse_args()
+    if args.check_alert_config:
+        error = alert_configuration_error()
+        print(f'Alert configuration: {error or "ready"}')
+        raise SystemExit(1 if error else 0)
+    print(main(args.source, classify=not args.no_classify, gradcam=not args.no_gradcam,
+               send_alerts=args.send_alerts))
           

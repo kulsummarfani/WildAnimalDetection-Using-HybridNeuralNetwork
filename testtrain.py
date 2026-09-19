@@ -1,21 +1,21 @@
 import os
 import cv2
 import numpy as np
-from keras.utils.np_utils import to_categorical
-from keras.layers import  MaxPooling2D
-from keras.layers import Dense, Dropout, Activation, Flatten, GlobalAveragePooling2D, BatchNormalization, RepeatVector
-from keras.layers import Convolution2D
-from keras.models import Sequential
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.layers import MaxPooling2D
+from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten, GlobalAveragePooling2D, BatchNormalization, RepeatVector
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.models import Sequential
 import pickle
-from keras.applications import VGG19
+from tensorflow.keras.applications import VGG19
 from sklearn.metrics import precision_score
 from sklearn.metrics import recall_score
 from sklearn.metrics import f1_score
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-from keras.callbacks import ModelCheckpoint
-from keras.layers import LSTM
-from keras.layers import Bidirectional, GRU
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import Bidirectional, GRU
 
 '''
 path = 'aug'
@@ -74,9 +74,9 @@ Y = to_categorical(Y)
 X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2) #split dataset into train and test
 
 cnn = Sequential()
-cnn.add(Convolution2D(32, (3 , 3), input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3]), activation = 'relu'))
+cnn.add(Conv2D(32, (3 , 3), input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3]), activation = 'relu'))
 cnn.add(MaxPooling2D(pool_size = (2, 2)))
-cnn.add(Convolution2D(32, (3, 3), activation = 'relu'))
+cnn.add(Conv2D(32, (3, 3), activation = 'relu'))
 cnn.add(MaxPooling2D(pool_size = (2, 2)))
 cnn.add(Flatten())
 cnn.add(Dense(units = 256, activation = 'relu'))
@@ -101,9 +101,9 @@ for layer in vgg.layers:
     layer.trainable = False
 vgg_bilstm = Sequential()
 vgg_bilstm.add(vgg)
-vgg_bilstm.add(Convolution2D(32, (1 , 1), input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3]), activation = 'relu'))
+vgg_bilstm.add(Conv2D(32, (1 , 1), input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3]), activation = 'relu'))
 vgg_bilstm.add(MaxPooling2D(pool_size = (1, 1)))
-vgg_bilstm.add(Convolution2D(32, (1, 1), activation = 'relu'))
+vgg_bilstm.add(Conv2D(32, (1, 1), activation = 'relu'))
 vgg_bilstm.add(MaxPooling2D(pool_size = (1, 1)))
 vgg_bilstm.add(Flatten())
 vgg_bilstm.add(RepeatVector(2))
@@ -128,9 +128,9 @@ print(acc)
 
 
 extension_gru = Sequential()
-extension_gru.add(Convolution2D(32, (3 , 3), input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3]), activation = 'relu'))
+extension_gru.add(Conv2D(32, (3 , 3), input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3]), activation = 'relu'))
 extension_gru.add(MaxPooling2D(pool_size = (2, 2)))
-extension_gru.add(Convolution2D(32, (3, 3), activation = 'relu'))
+extension_gru.add(Conv2D(32, (3, 3), activation = 'relu'))
 extension_gru.add(MaxPooling2D(pool_size = (2, 2)))
 extension_gru.add(Flatten())
 extension_gru.add(RepeatVector(2))
