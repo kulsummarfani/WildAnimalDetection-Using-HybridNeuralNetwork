@@ -55,6 +55,26 @@ from the project root after installing the requirements:
 
 Open `http://localhost:5000`. The dashboard accepts an uploaded frame, runs
 the project detector and VGG-Bi-LSTM crop classifier, stores alert history in
-`.runtime/alerts_log.json`, and serves annotated and Grad-CAM evidence images.
+Supabase, and serves protected annotated and Grad-CAM evidence images.
 Movement and distance remain single-frame estimates; the Bi-LSTM model is not
 fed a temporal sequence by this upload workflow.
+
+### Supabase setup
+
+1. Run [supabase_schema.sql](supabase_schema.sql) in the Supabase SQL editor.
+2. Create users in Supabase Authentication and promote their roles using the
+	SQL comments at the bottom of the schema file.
+3. Disable public sign-ups in the Supabase Auth settings.
+4. Add these server-only values to `.env`:
+
+```text
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_ANON_KEY=<publishable-or-anon-key>
+SUPABASE_SERVICE_KEY=<service-role-or-secret-key>
+```
+
+The service key stays in Flask and is never sent to the browser. Residents can
+view alerts; watchmen and admins can run detection. Web-triggered SMS remains
+opt-in with `SEND_SMS_ALERTS=1`. By default, the same species can trigger at
+most one SMS every five minutes; set `SMS_COOLDOWN_SECONDS=0` to disable the
+cooldown or choose another interval.

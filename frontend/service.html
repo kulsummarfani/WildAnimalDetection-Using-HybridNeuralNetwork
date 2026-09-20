@@ -186,18 +186,39 @@
     </div>
     <!-- Dashboard End -->
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="js/auth.js"></script>
     <script>
     const API_BASE = window.location.origin;
 
-    function renderSession() {
-        const role = sessionStorage.getItem('vanrakshak_role');
-        const user = sessionStorage.getItem('vanrakshak_user');
+    async function initSession() {
         const el = document.getElementById('sessionInfo');
-        if (role) {
-            el.innerHTML = 'Signed in as <strong>' + user + '</strong> (' + role + ') &mdash; <a href="#" onclick="sessionStorage.clear(); location.reload(); return false;">Log out</a>';
+        const detectRow = document.querySelector('.row.g-4.mb-5');
+        const alertsRow = document.querySelector('.row.g-4:not(.mb-5)');
+        try {
+            const res = await VR.api('/api/me');
+            if (!res.ok) {
+                el.innerHTML = 'Not signed in &mdash; <a href="membership.html">log in</a> to view alerts.';
+                detectRow.classList.add('d-none');
+                alertsRow.classList.add('d-none');
+                return;
+            }
+            const me = await res.json();
+            el.innerHTML = 'Signed in as <strong></strong> (' + me.role + ') &mdash; <a href="#" id="logoutLink">Log out</a>';
+            el.querySelector('strong').textContent = me.username;
+            document.getElementById('logoutLink').addEventListener('click', async function (event) {
+                event.preventDefault();
+                await VR.signOut();
+                window.location.href = 'membership.html';
+            });
+            if (me.role === 'resident') detectRow.classList.add('d-none');
+            loadAlerts();
+        } catch (err) {
+            el.textContent = 'Could not reach the server or Supabase. Check the backend configuration.';
+            detectRow.classList.add('d-none');
+            alertsRow.classList.add('d-none');
         }
     }
-    renderSession();
 
     document.getElementById('imageInput').addEventListener('change', function () {
         const file = this.files[0];
@@ -217,11 +238,9 @@
 
         const formData = new FormData();
         formData.append('image', fileInput.files[0]);
-        formData.append('role', sessionStorage.getItem('vanrakshak_role') || 'resident');
-
         status.innerHTML = '<span class="text-muted">Running detection...</span>';
         try {
-            const res = await fetch(API_BASE + '/api/detect', { method: 'POST', body: formData });
+            const res = await VR.api('/api/detect', { method: 'POST', body: formData });
             const data = await res.json();
             if (!res.ok) {
                 status.innerHTML = '<span class="text-danger">' + (data.error || 'Detection failed') + '</span>';
@@ -232,23 +251,25 @@
             if (!data.detections || data.detections.length === 0) {
                 resultBox.innerHTML = '<p class="text-muted">No animal detected in this frame.</p>';
             } else {
-                    let html = data.annotated_url ? '<img src="' + data.annotated_url + '" class="img-fluid rounded mb-4" alt="Annotated detection result">' : '';
+                    let html = data.annotated_url ? '<img data-secure-src="' + data.annotated_url + '" class="img-fluid rounded mb-4" alt="Annotated detection result">' : '';
                 data.detections.forEach(function (d) {
                     html += '<div class="mb-3 p-3 border rounded">' +
                         '<h5 class="mb-1">' + d.label + ' <span class="badge bg-primary">' + (d.confidence * 100).toFixed(1) + '%</span></h5>' +
                         '<p class="mb-1"><strong>Threat tier:</strong> ' + d.threat_tier + '</p>' +
                         '<p class="mb-1"><strong>Movement:</strong> ' + (d.movement || 'unknown') + '</p>' +
                         '<p class="mb-1"><strong>Est. distance:</strong> ' + (d.distance_m || '?') + ' m</p>' +
-                        (d.evidence_url ? '<a href="' + d.evidence_url + '" target="_blank"><img src="' + d.evidence_url + '" class="img-fluid rounded mt-2" alt="Grad-CAM evidence for ' + d.label + '"></a>' : '') +
+                        (d.evidence_url ? '<img data-secure-src="' + d.evidence_url + '" class="img-fluid rounded mt-2" alt="Evidence for ' + d.label + '">' : '') +
                         '</div>';
                 });
                 if (data.alert) {
                     html += '<div class="p-3 rounded bg-white border border-primary">' +
                         '<h6 class="text-primary">Alert Generated (' + data.alert.tier + ')</h6>' +
                         '<p class="mb-0">' + data.alert.message + '</p>' +
+                        smsNote(data.alert) +
                         '</div>';
                 }
                 resultBox.innerHTML = html;
+                VR.hydrateImages(resultBox);
             }
             loadAlerts();
         } catch (err) {
@@ -256,11 +277,28 @@
         }
     });
 
+    function smsNote(alert) {
+        let text = '';
+        if (alert.sms_status === 'sent') {
+            text = 'SMS sent.';
+        } else if (alert.sms_status === 'cooldown') {
+            const secs = alert.sms_retry_in_seconds || 0;
+            text = 'SMS not sent: this species was texted recently. Next text possible in ' + Math.floor(secs / 60) + 'm ' + (secs % 60) + 's.';
+        } else if (alert.sms_status === 'failed') {
+            text = 'SMS failed to send. Check the Twilio setup.';
+        }
+        return text ? '<p class="mb-0 mt-2 text-muted small">' + text + '</p>' : '';
+    }
+
     async function loadAlerts() {
         const tbody = document.getElementById('alertsTableBody');
         try {
-            const res = await fetch(API_BASE + '/api/alerts');
+            const res = await VR.api('/api/alerts');
             const data = await res.json();
+            if (!res.ok) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Log in to view alerts.</td></tr>';
+                return;
+            }
             if (!data.alerts || data.alerts.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No alerts yet.</td></tr>';
                 return;
@@ -280,7 +318,7 @@
     }
 
     document.getElementById('refreshAlerts').addEventListener('click', loadAlerts);
-    loadAlerts();
+    initSession();
     </script>
 
         
@@ -332,10 +370,6 @@
                 <div class="row">
                     <div class="col-md-6 text-center text-md-start mb-3 mb-md-0">
                         &copy; <a class="border-bottom" href="#">VanRakshak AI</a>, Final Year Project.
-                    </div>
-                    <div class="col-md-6 text-center text-md-end">
-                        <!--/*** This template is free as long as you keep the footer author’s credit link/attribution link/backlink. If you'd like to use the template without the footer author’s credit link/attribution link/backlink, you can purchase the Credit Removal License from "https://htmlcodex.com/credit-removal". Thank you for your support. ***/-->
-                        Designed By <a class="border-bottom" href="https://htmlcodex.com">HTML Codex</a>
                     </div>
                 </div>
             </div>

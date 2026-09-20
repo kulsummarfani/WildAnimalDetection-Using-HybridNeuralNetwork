@@ -133,24 +133,16 @@
                 <div class="col-lg-6">
                     <form id="loginForm" class="bg-light rounded p-5">
                         <div class="mb-3">
-                            <label class="form-label">Role</label>
-                            <select id="loginRole" class="form-select" required>
-                                <option value="resident">Resident</option>
-                                <option value="watchman">Watchman / Surveillance Operator</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Username</label>
-                            <input id="loginUsername" type="text" class="form-control" placeholder="e.g. watchman1" required>
+                            <label class="form-label">Email</label>
+                            <input id="loginEmail" type="email" class="form-control" placeholder="you@example.com" autocomplete="username" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Password</label>
-                            <input id="loginPassword" type="password" class="form-control" placeholder="Demo password" required>
+                            <input id="loginPassword" type="password" class="form-control" placeholder="Password" autocomplete="current-password" required>
                         </div>
                         <div id="loginMessage" class="mb-3"></div>
                         <button type="submit" class="btn btn-primary w-100 py-3">Sign In</button>
-                        <p class="text-muted small mt-3 mb-0">Demo credentials: admin / watchman1 / resident1, password <code>demo123</code> for each. This is a project prototype login, not production authentication.</p>
+                        <p class="text-muted small mt-3 mb-0">Accounts are created by the project administrator. Your role is assigned on the server.</p>
                     </form>
                 </div>
             </div>
@@ -158,31 +150,35 @@
     </div>
     <!-- Login End -->
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="js/auth.js"></script>
     <script>
     document.getElementById('loginForm').addEventListener('submit', async function (e) {
         e.preventDefault();
-        const role = document.getElementById('loginRole').value;
-        const username = document.getElementById('loginUsername').value;
+        const email = document.getElementById('loginEmail').value.trim();
         const password = document.getElementById('loginPassword').value;
         const msg = document.getElementById('loginMessage');
         msg.textContent = 'Signing in...';
         try {
-            const res = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ role, username, password })
-            });
-            const data = await res.json();
-            if (res.ok && data.success) {
-                sessionStorage.setItem('vanrakshak_role', data.role);
-                sessionStorage.setItem('vanrakshak_user', data.username);
-                msg.innerHTML = '<span class="text-success">Signed in as ' + data.role + '. Redirecting to dashboard...</span>';
+            const result = await VR.signIn(email, password);
+            if (!result.data.session || result.error) {
+                msg.textContent = result.error ? result.error.message : 'Login failed';
+                msg.className = 'mb-3 text-danger';
+                return;
+            }
+            const res = await VR.api('/api/me');
+            if (res.ok) {
+                const me = await res.json();
+                msg.textContent = 'Signed in as ' + me.role + '. Redirecting to dashboard...';
+                msg.className = 'mb-3 text-success';
                 setTimeout(() => { window.location.href = 'service.html'; }, 800);
             } else {
-                msg.innerHTML = '<span class="text-danger">' + (data.error || 'Login failed') + '</span>';
+                msg.textContent = 'Signed in, but the server could not verify this account.';
+                msg.className = 'mb-3 text-danger';
             }
         } catch (err) {
-            msg.innerHTML = '<span class="text-danger">Could not reach the server. Is the Flask backend running?</span>';
+            msg.textContent = 'Could not reach the server or Supabase. Check the backend configuration.';
+            msg.className = 'mb-3 text-danger';
         }
     });
     </script>
